@@ -65,10 +65,17 @@ except Exception as e:
 scaler = MinMaxScaler()
 scaler.fit([[0,0,0,0,0,0], [100,100,100,100,100,100]])
 
-LAST_SYSTEM_DATA = None
-SYSTEM_HISTORY = []
-LAST_PREDICTION = None
-FEATURE_BUFFER = []
+USER_SESSIONS = {}
+
+def get_user_session(email):
+    if email not in USER_SESSIONS:
+        USER_SESSIONS[email] = {
+            "LAST_SYSTEM_DATA": None,
+            "SYSTEM_HISTORY": [],
+            "LAST_PREDICTION": None,
+            "FEATURE_BUFFER": []
+        }
+    return USER_SESSIONS[email]
 
 def token_required(f):
 
@@ -178,7 +185,8 @@ def login():
 @token_required
 def analyze():
 
-    global LAST_SYSTEM_DATA, SYSTEM_HISTORY, LAST_PREDICTION, FEATURE_BUFFER
+    user_email = request.user["email"]
+    session = get_user_session(user_email)
 
     if not MODEL_LOADED:
         return jsonify({"error": "Model not loaded"}), 500
@@ -189,9 +197,9 @@ def analyze():
         return jsonify({"error": "No data received"}), 400
 
     # Store latest system data
-    LAST_SYSTEM_DATA = data
+    session["LAST_SYSTEM_DATA"] = data
 
-    SYSTEM_HISTORY.append({
+    session["SYSTEM_HISTORY"].append({
         "time": datetime.datetime.utcnow().strftime("%H:%M:%S"),
         "cpu": data.get("cpu_usage", 0),
         "ram": data.get("memory_usage", 0),
@@ -199,8 +207,8 @@ def analyze():
         "net_down": data.get("net_download_mbps", 0)
     })
 
-    if len(SYSTEM_HISTORY) > 30:
-        SYSTEM_HISTORY.pop(0)
+    if len(session["SYSTEM_HISTORY"]) > 30:
+        session["SYSTEM_HISTORY"].pop(0)
 
     try:
 
@@ -216,14 +224,14 @@ def analyze():
             float(data.get("disk_write_mbps", 0))
         ]
 
-        FEATURE_BUFFER.append(raw_features)
-        if len(FEATURE_BUFFER) > SEQUENCE_LENGTH:
-            FEATURE_BUFFER.pop(0)
+        session["FEATURE_BUFFER"].append(raw_features)
+        if len(session["FEATURE_BUFFER"]) > SEQUENCE_LENGTH:
+            session["FEATURE_BUFFER"].pop(0)
 
-        if len(FEATURE_BUFFER) < SEQUENCE_LENGTH:
-            padded_features = [FEATURE_BUFFER[0]] * (SEQUENCE_LENGTH - len(FEATURE_BUFFER)) + FEATURE_BUFFER
+        if len(session["FEATURE_BUFFER"]) < SEQUENCE_LENGTH:
+            padded_features = [session["FEATURE_BUFFER"][0]] * (SEQUENCE_LENGTH - len(session["FEATURE_BUFFER"])) + session["FEATURE_BUFFER"]
         else:
-            padded_features = FEATURE_BUFFER
+            padded_features = session["FEATURE_BUFFER"]
 
         scaled_features = scaler.transform(padded_features)
 
@@ -231,46 +239,66 @@ def analyze():
             1, SEQUENCE_LENGTH, len(raw_features)
         )
 
-        idle_prob = float(model.predict(sequence, verbose=0)[0][0])
+        prediction = model.predict(sequence, verbose=0)[0]
+        predicted_class = int(np.argmax(prediction))
+        confidence = float(prediction[predicted_class])
+        
+        state_mapping = {
+            0: "Idle",
+            1: "Low Load",
+            2: "Normal Load",
+            3: "High Load",
+            4: "Critical Load"
+        }
+        
+        state = state_mapping.get(predicted_class, "Unknown")
 
-        if idle_prob > 0.7:
-
-            state = "Likely Idle"
+        if predicted_class == 0:
             recommendations = [
-                "Reduce screen brightness",
-                "Enable power saver mode",
-                "Pause background apps"
+                "System is currently idle. Consider enabling power saver mode.",
+                "Reduce screen brightness to save battery life.",
+                "Background processes are minimal."
             ]
-
-        elif idle_prob > 0.4:
-
-            state = "Uncertain"
+        elif predicted_class == 1:
             recommendations = [
-                "Lower screen brightness",
-                "Monitor background apps"
+                "System is experiencing low load. Performance is optimal.",
+                "You can comfortably run background tasks like updates or backups."
             ]
-
-        else:
-
-            state = "Active"
-            recommendations = []
+        elif predicted_class == 2:
+            recommendations = [
+                "System is under normal load with balanced resource usage.",
+                "Operating efficiently. No immediate action needed."
+            ]
+        elif predicted_class == 3:
+            recommendations = [
+                "High resource utilization detected. System is under heavy load.",
+                "Monitor your application usage to prevent lag."
+            ]
             if cpu_val > 75:
-                recommendations.append("High CPU usage. Consider closing heavy applications.")
+                recommendations.append("CPU usage is high (>75%). Consider closing CPU-intensive applications.")
             if mem_val > 75:
-                recommendations.append("High memory usage. Close unused tabs or programs.")
-            if not recommendations:
-                recommendations.append("System running optimally")
+                recommendations.append("Memory usage is high (>75%). Close unused tabs or programs.")
+        elif predicted_class == 4:
+            recommendations = [
+                "CRITICAL LOAD: System is severely stressed and may become unresponsive.",
+                "Immediately terminate non-essential heavy applications.",
+                "Check for rogue processes causing high CPU or memory spikes."
+            ]
+        else:
+            recommendations = ["System running optimally."]
 
-        LAST_PREDICTION = {
+        session["LAST_PREDICTION"] = {
             "time": datetime.datetime.utcnow().strftime("%H:%M:%S"),
-            "idle_probability": round(idle_prob, 2),
+            "idle_probability": round(float(prediction[0]), 2), # Keep backward compatibility by passing class 0 prob
+            "prediction_confidence": round(confidence, 2),
             "state": state,
             "recommendations": recommendations
         }
 
         return jsonify({
             "user": request.user["email"],
-            "idle_probability": round(idle_prob, 2),
+            "idle_probability": round(float(prediction[0]), 2),
+            "prediction_confidence": round(confidence, 2),
             "state": state,
             "recommendations": recommendations
         })
@@ -283,12 +311,15 @@ def analyze():
 @token_required
 def client_system():
 
-    if LAST_SYSTEM_DATA is None:
+    user_email = request.user["email"]
+    session = get_user_session(user_email)
+
+    if session["LAST_SYSTEM_DATA"] is None:
         return jsonify({"status": "warming_up"})
 
     return jsonify({
-        "current": LAST_SYSTEM_DATA,
-        "history": SYSTEM_HISTORY
+        "current": session["LAST_SYSTEM_DATA"],
+        "history": session["SYSTEM_HISTORY"]
     })
 
 @app.route("/status")
@@ -305,13 +336,16 @@ def status():
 @token_required
 def predicted():
 
-    if LAST_PREDICTION is None:
+    user_email = request.user["email"]
+    session = get_user_session(user_email)
+
+    if session["LAST_PREDICTION"] is None:
         return jsonify({
             "status": "warming_up",
             "message": "Waiting for prediction"
         })
 
-    return jsonify(LAST_PREDICTION)
+    return jsonify(session["LAST_PREDICTION"])
 
 if __name__ == "__main__":
 
