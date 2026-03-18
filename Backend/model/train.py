@@ -1,26 +1,20 @@
-# backend/model/train.py
-
 import pandas as pd
 import numpy as np
-
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
+from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.callbacks import EarlyStopping
+import joblib
 
-# -----------------------------
-# 1. LOAD DATA
-# -----------------------------
+# =========================
+# LOAD DATA
+# =========================
 data_path = "../data/laptop_data.csv"
 df = pd.read_csv(data_path)
 
 print("Data loaded:", df.shape)
 
-# -----------------------------
-# 2. SELECT FEATURES & CREATE RESOURCE STATES
-# -----------------------------
 FEATURE_COLUMNS = [
     "cpu_usage",
     "memory_usage",
@@ -30,85 +24,67 @@ FEATURE_COLUMNS = [
     "disk_write_mbps"
 ]
 
-features = df[FEATURE_COLUMNS]
+data = df[FEATURE_COLUMNS].values
 
-# Dynamic state generation based on resource usage for more professional prediction
-def determine_state(row):
-    cpu = row['cpu_usage']
-    mem = row['memory_usage']
-    
-    if cpu > 85 or mem > 90:
-        return 4  # Critical Load
-    elif cpu > 65 or mem > 80:
-        return 3  # High Load
-    elif cpu > 30 or mem > 60:
-        return 2  # Normal Load
-    elif cpu > 10 or mem > 40:
-        return 1  # Low Load
-    else:
-        return 0  # Idle
-
-df['system_state'] = df.apply(determine_state, axis=1)
-target = df["system_state"]
-
-# -----------------------------
-# 3. NORMALIZE FEATURES
-# -----------------------------
+# =========================
+# SCALE DATA
+# =========================
 scaler = MinMaxScaler()
-features_scaled = scaler.fit_transform(features)
+data_scaled = scaler.fit_transform(data)
 
-# -----------------------------
-# 4. CREATE SEQUENCES (LSTM INPUT) & ONE-HOT TARGETS
-# -----------------------------
+# Save scaler (IMPORTANT for Flask)
+joblib.dump(scaler, "scaler.save")
+
+# =========================
+# CREATE SEQUENCES
+# =========================
 SEQUENCE_LENGTH = 10
 
 X = []
 y = []
 
-# Convert target to one-hot encoding for categorical crossentropy
-target_onehot = to_categorical(target, num_classes=5)
-
-for i in range(len(features_scaled) - SEQUENCE_LENGTH):
-    X.append(features_scaled[i:i + SEQUENCE_LENGTH])
-    y.append(target_onehot[i + SEQUENCE_LENGTH])
+for i in range(len(data_scaled) - SEQUENCE_LENGTH):
+    X.append(data_scaled[i:i + SEQUENCE_LENGTH])
+    y.append(data_scaled[i + SEQUENCE_LENGTH][0])  # next CPU
 
 X = np.array(X)
 y = np.array(y)
 
-print("Sequences shape:", X.shape)
-print("Labels shape:", y.shape)
+print("X shape:", X.shape)
+print("y shape:", y.shape)
 
-# -----------------------------
-# 5. TRAIN-TEST SPLIT
-# -----------------------------
+# =========================
+# TRAIN TEST SPLIT
+# =========================
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
-# -----------------------------
-# 6. BUILD LSTM MODEL
-# -----------------------------
+# =========================
+# MODEL
+# =========================
 model = Sequential([
-    Bidirectional(LSTM(64, return_sequences=True), input_shape=(SEQUENCE_LENGTH, X.shape[2])),
-    Dropout(0.3),
-    LSTM(32, return_sequences=False),
-    Dropout(0.3),
-    Dense(16, activation="relu"),
-    Dense(5, activation="softmax")  # 5 classes for resource states
+    LSTM(64, input_shape=(SEQUENCE_LENGTH, X.shape[2])),
+    Dense(32, activation="relu"),
+    Dense(1)
 ])
 
 model.compile(
     optimizer="adam",
-    loss="categorical_crossentropy",
-    metrics=["accuracy"]
+    loss="mse",
+    metrics=["mae"]
 )
 
 model.summary()
 
-# -----------------------------
-# 7. TRAIN MODEL
-# -----------------------------
-early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+# =========================
+# TRAIN
+# =========================
+early_stopping = EarlyStopping(
+    monitor='val_loss',
+    patience=3,
+    restore_best_weights=True
+)
 
 history = model.fit(
     X_train,
@@ -119,14 +95,18 @@ history = model.fit(
     callbacks=[early_stopping]
 )
 
-# -----------------------------
-# 8. EVALUATE MODEL
-# -----------------------------
-loss, accuracy = model.evaluate(X_test, y_test)
-print(f"Test Accuracy: {accuracy:.2f}")
+# =========================
+# EVALUATE
+# =========================
+loss, mae = model.evaluate(X_test, y_test)
 
-# -----------------------------
-# 9. SAVE MODEL
-# -----------------------------
+print(f"Test Loss (MSE): {loss:.4f}")
+print(f"Test MAE: {mae:.4f}")
+
+# =========================
+# SAVE MODEL
+# =========================
 model.save("model.h5")
-print("Model saved as model.h5")
+
+print("✅ Model saved as model.h5")
+print("✅ Scaler saved as scaler.save")
