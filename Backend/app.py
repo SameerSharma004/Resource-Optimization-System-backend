@@ -12,28 +12,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import joblib
 
 def load_local_env():
-    # Force load .env from current directory
     env_path = os.path.join(os.path.dirname(__file__), ".env")
     if os.path.exists(env_path):
         with open(env_path, "r") as f:
             for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
                 if "=" in line:
-                    try:
-                        key, val = line.split("=", 1)
-                        # Clean key and value
-                        key = key.strip()
-                        val = val.strip()
-                        # Remove leading/trailing quotes
-                        if (val.startswith('"') and val.endswith('"')) or \
-                           (val.startswith("'") and val.endswith("'")):
-                            val = val[1:-1]
-                        
-                        os.environ[key] = val
-                    except Exception as e:
-                        print(f"Error parsing .env line: {line} - {e}")
+                    key, val = line.split("=", 1)
+                    os.environ[key.strip()] = val.strip().strip('"')
 
 load_local_env()
 
@@ -46,7 +31,7 @@ app = Flask(__name__)
 CORS(app)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-12345")
-MONGO_URI = os.getenv("MONGO_URI","")
+MONGO_URI = os.getenv("MONGO_URI","mongodb+srv://sam18112k4_db_user:lfZ3QKvlgznCpmTU@rosuserdata.pio2vka.mongodb.net/?appName=rosuserdata")
 DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
 users_collection = None
 
