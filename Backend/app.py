@@ -31,7 +31,7 @@ app = Flask(__name__)
 CORS(app)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-12345")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://sam18112k4_db_user:lfZ3QKvlgznCpmTU@rosuserdata.pio2vka.mongodb.net/?appName=rosuserdata")
+MONGO_URI = os.getenv("MONGO_URI")
 DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
 users_collection = None
 
@@ -176,6 +176,20 @@ def analyze():
     if not data:
         return jsonify({"error": "No data received"}), 400
     session["LAST_SYSTEM_DATA"] = data
+    
+    # Ensure ram_components exists for the dashboard
+    if "ram_components" not in data:
+        total = float(data.get("memory_total_gb", 1))
+        used = float(data.get("memory_used_gb", 0))
+        free = float(data.get("memory_free_gb", 0))
+        data["ram_components"] = {
+            "active": used,
+            "inactive": 0,
+            "cached": 0,
+            "free": free,
+            "total": total
+        }
+
     session["SYSTEM_HISTORY"].append({
         "time": datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"),
         "cpu": data.get("cpu_usage", 0),
