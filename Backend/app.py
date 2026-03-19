@@ -39,7 +39,6 @@ print(f"DEBUG: Attempting to connect to MongoDB URI: {MONGO_URI[:30]}...")
 
 try:
     mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
-    # The ismaster command is cheap and does not require auth.
     mongo_client.admin.command('ismaster')
     db = mongo_client["ros"]
     users_collection = db["userdata"]
@@ -176,8 +175,6 @@ def analyze():
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data received"}), 400
-
-    # Store system data
     session["LAST_SYSTEM_DATA"] = data
     session["SYSTEM_HISTORY"].append({
         "time": datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"),
@@ -191,9 +188,6 @@ def analyze():
         session["SYSTEM_HISTORY"].pop(0)
 
     try:
-        # =========================
-        # PREPARE FEATURES
-        # =========================
         cpu_val = float(data.get("cpu_usage", 0))
         mem_val = float(data.get("memory_usage", 0))
 
@@ -205,10 +199,6 @@ def analyze():
             float(data.get("disk_read_mbps", 0)),
             float(data.get("disk_write_mbps", 0))
         ]
-
-        # =========================
-        # BUFFER (SEQUENCE)
-        # =========================
         session["FEATURE_BUFFER"].append(raw_features)
 
         if len(session["FEATURE_BUFFER"]) > SEQUENCE_LENGTH:
@@ -219,20 +209,13 @@ def analyze():
         else:
             padded = session["FEATURE_BUFFER"]
 
-        # =========================
-        # SCALE + PREDICT
-        # =========================
-        future_cpu = cpu_val # Fallback
+        future_cpu = cpu_val
         if scaler and model:
             scaled = scaler.transform(padded)
             sequence = np.array(scaled).reshape(1, SEQUENCE_LENGTH, len(raw_features))
             prediction = model.predict(sequence, verbose=0)
-            future_cpu = float(prediction[0][0]) * 100  # convert back
+            future_cpu = float(prediction[0][0]) * 100
         
-
-        # =========================
-        # GEMINI-STYLE INTELLIGENCE
-        # =========================
         top_proc_name = "N/A"
         top_proc_cpu = 0
         if psutil:
@@ -244,26 +227,23 @@ def analyze():
                     top_proc_cpu = top_p.info['cpu_percent']
             except: pass
 
-        # Generate Narrative (The Gemini Touch)
         intelligence_report = []
         
-        # 1. Executive Summary
         if future_cpu > 80:
             state = "Critical Saturation Imminent"
-            summary = f"🚨 CRITICAL ALERT: Our neural engine predicts a severe resource spike. Total CPU utilization is projected to hit {future_cpu:.1f}% within the next observation window."
+            summary = f"CRITICAL ALERT: Our neural engine predicts a severe resource spike. Total CPU utilization is projected to hit {future_cpu:.1f}% within the next observation window."
         elif future_cpu > 50:
             state = "High Load Warning"
-            summary = f"⚠️ SYSTEM WARNING: Sustained high-load patterns detected. Expect resource pressure to stabilize around {future_cpu:.1f}%."
+            summary = f"SYSTEM WARNING: Sustained high-load patterns detected. Expect resource pressure to stabilize around {future_cpu:.1f}%."
         elif future_cpu > 20:
             state = "Active Optimization"
-            summary = f"✅ STABLE: The system is operating within balanced parameters. Projected overhead is nominal at {future_cpu:.1f}%."
+            summary = f"STABLE: The system is operating within balanced parameters. Projected overhead is nominal at {future_cpu:.1f}%."
         else:
             state = "Idle / Cooling"
-            summary = f"❄️ OPTIMAL: System is currently in a low-power state. Neural forecast indicates minimal activity ({future_cpu:.1f}%)."
+            summary = f"OPTIMAL: System is currently in a low-power state. Neural forecast indicates minimal activity ({future_cpu:.1f}%)."
 
         intelligence_report.append(summary)
 
-        # 2. Detailed Diagnostic
         diagnostic = f"DIAGNOSTIC: Current CPU is {cpu_val}% with {mem_val}% Memory saturation. "
         if top_proc_cpu > 10:
             diagnostic += f"The primary driver appears to be '{top_proc_name}' consuming {top_proc_cpu}% of available cycles. "
@@ -273,7 +253,6 @@ def analyze():
         
         intelligence_report.append(diagnostic)
 
-        # 3. Actionable Intelligence (The 'Gemini' Suggestions)
         if future_cpu > 75:
             advice = "ADVICE: Immediate intervention recommended. Please terminate high-impact background tasks. If this is a server, consider scaling or enabling aggressive throttling."
         elif mem_val > 80:
@@ -283,9 +262,6 @@ def analyze():
 
         intelligence_report.append(advice)
 
-        # =========================
-        # STORE RESULT
-        # =========================
         session["LAST_PREDICTION"] = {
             "time": datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"),
             "future_cpu": round(future_cpu, 2),
