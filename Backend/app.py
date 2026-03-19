@@ -35,7 +35,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
 users_collection = None
 
-print(f"DEBUG: Attempting to connect to MongoDB URI: {MONGO_URI[:30]}...")
+print(f"DEBUG: Attempting to connect to MongoDB URI")
 
 try:
     mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
